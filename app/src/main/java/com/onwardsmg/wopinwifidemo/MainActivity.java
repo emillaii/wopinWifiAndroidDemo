@@ -200,6 +200,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     Log.d(TAG, response.toString());
                     final String jsonString = response.body().string();
                     Log.d(TAG, jsonString);
+                    start();
                 }
             });
         } else {
