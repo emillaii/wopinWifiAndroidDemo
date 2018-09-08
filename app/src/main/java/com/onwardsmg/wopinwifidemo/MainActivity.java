@@ -13,6 +13,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.squareup.okhttp.Callback;
@@ -25,6 +26,7 @@ import com.squareup.okhttp.Response;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.w3c.dom.Text;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -41,7 +43,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private OkHttpClient client = new OkHttpClient();
     private EditText editTextSSID;
     private EditText editTextPassword;
-
+    private EditText editTextR;
+    private EditText editTextG;
+    private EditText editTextB;
+    private TextView textViewConnectedSSID;
+    private TextView textViewConnectedDevice;
+    private TextView textViewStatus;
+    private String cup_uuid;
+    private boolean isConnectingCup = false;
+    private boolean isConnectedCup = false;
     //Mqtt Related
     private static final String URL = "tcp://wifi.h2popo.com:8083";
     private static final String username = "wopin";
@@ -68,11 +78,22 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         findViewById(R.id.buttonConnectWifi).setOnClickListener(this);
         findViewById(R.id.buttonLink).setOnClickListener(this);
-        findViewById(R.id.buttonPublish).setOnClickListener(this);
-        findViewById(R.id.buttonSubscribe).setOnClickListener(this);
+        findViewById(R.id.buttonHydroOn).setOnClickListener(this);
+        findViewById(R.id.buttonHydroOff).setOnClickListener(this);
+        findViewById(R.id.buttonCleanOn).setOnClickListener(this);
+        findViewById(R.id.buttonCleanOff).setOnClickListener(this);
+        findViewById(R.id.buttonSendLED).setOnClickListener(this);
+        //findViewById(R.id.buttonPublish).setOnClickListener(this);
+        //findViewById(R.id.buttonSubscribe).setOnClickListener(this);
         list =  findViewById(R.id.list);
         editTextSSID = findViewById(R.id.editTextSSID);
         editTextPassword = findViewById(R.id.editTextPassword);
+        textViewConnectedSSID = findViewById(R.id.textViewConnectedSSID);
+        textViewConnectedDevice = findViewById(R.id.textViewDeviceId);
+        textViewStatus = findViewById(R.id.textViewStatus);
+        editTextR = findViewById(R.id.editTextRedLed);
+        editTextG = findViewById(R.id.editTextGLed);
+        editTextB = findViewById(R.id.editTextBLed);
         adapter = new ArrayAdapter<String>(this, android.R.layout.simple_expandable_list_item_1, listItems);
         list.setAdapter(adapter);
 
@@ -94,31 +115,57 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             case R.id.buttonConnectWifi:
                 Log.d(TAG, "Connect Wifi is clicked");
                 //ToDo: Get this from QR code
+                textViewStatus.setText("Connecting Cup Wifi");
                 wifiConnectionReceiver.connectToWifi("H2PoPo", "12345678");
-                break;
+            break;
             case R.id.buttonLink:
                 Log.d(TAG, "Link Wifi is clicked");
+                textViewStatus.setText("Linking");
                 String ssid = editTextSSID.getText().toString();
                 String password = editTextPassword.getText().toString();
                 sendWifiConfigToCup(ssid, password);
                 break;
-            case R.id.buttonSubscribe:
-                Log.d(TAG, "Subscribe button is clicked");
-                //ToDo: ID can be get from linking cup
-                MqttManager.getInstance().subscribe("WOPIN-ECFABC1A490F", 0);
+            case R.id.buttonHydroOn:
+                sendHydroOnOffCommand(String.valueOf(textViewConnectedDevice.getText()) + "-D", true, "0360");
                 break;
-            case R.id.buttonPublish:
-                Log.d(TAG, "Publish button is clicked");
-                MqttManager.getInstance().publish("WOPIN-ECFABC1A490F", 0, "hello".getBytes());
+            case R.id.buttonHydroOff:
+                sendHydroOnOffCommand(String.valueOf(textViewConnectedDevice.getText())+ "-D", false, "0000");
                 break;
+            case R.id.buttonCleanOn:
+                sendCleanOnOffCommand(String.valueOf(textViewConnectedDevice.getText())+ "-D", true);
+                break;
+            case R.id.buttonCleanOff:
+                sendCleanOnOffCommand(String.valueOf(textViewConnectedDevice.getText())+ "-D", false);
+                break;
+            case R.id.buttonSendLED:
+                String rStr = editTextR.getText().toString();
+                String gStr = editTextG.getText().toString();
+                String bStr = editTextB.getText().toString();
+                sendLEDCommand(String.valueOf(textViewConnectedDevice.getText())+ "-D",
+                                              Integer.parseInt(rStr),
+                                              Integer.parseInt(gStr),
+                                              Integer.parseInt(bStr));
+                break;
+//            case R.id.buttonSubscribe:
+//                Log.d(TAG, "Subscribe button is clicked");
+//                //ToDo: ID can be get from linking cup
+//                MqttManager.getInstance().subscribe("WOPIN-ECFABC1A490F", 0);
+//                break;
+//            case R.id.buttonPublish:
+//                Log.d(TAG, "Publish button is clicked");
+//                MqttManager.getInstance().publish("WOPIN-ECFABC1A490F", 0, "hello".getBytes());
+//                break;
             default:
                 break;
         }
     }
 
     public void start() {
-        boolean b = MqttManager.getInstance().creatConnect(URL, username, password, clientId);
-        Log.d(TAG, "Mqtt isConnected: " + b);
+        if (isConnectedCup) {
+            boolean b = MqttManager.getInstance().creatConnect(URL, username, password, clientId);
+            Log.d(TAG, "Mqtt isConnected: " + b);
+            MqttManager.getInstance().subscribe(cup_uuid, 0);
+        }
         handler.postDelayed(runnable, 10000);
     }
 
@@ -126,9 +173,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         @Override
         public void run() {
             String currentSSID = wifiConnectionReceiver.getConnectionInfo();
+            textViewConnectedSSID.setText(currentSSID);
             //ToDo: Check the current connected ID to be eqaul to the QrCode
             if (currentSSID.trim().equals("\"H2PoPo\"")) {
                 Log.d(TAG, "Sending scanning request");
+                textViewStatus.setText("scanning");
                 MediaType mediaType = MediaType.parse("application/octet-stream");
                 RequestBody body = RequestBody.create(mediaType, "scan:1\n");
                 Request request = new Request.Builder()
@@ -152,6 +201,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         MainActivity.this.runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
+                                textViewStatus.setText("Please Enter SSID PW");
                                 JSONArray jsonResponse;
                                 try {
                                     jsonResponse = new JSONArray(jsonString);
@@ -170,6 +220,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     }
                 });
             } else {
+                if (isConnectingCup) {
+                    textViewStatus.setText("Cup Online!");
+                    isConnectingCup = false;
+                    isConnectedCup = true;
+                }
                 start();
             }
         }
@@ -200,6 +255,16 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     Log.d(TAG, response.toString());
                     final String jsonString = response.body().string();
                     Log.d(TAG, jsonString);
+                    try {
+                        JSONObject json  = new JSONObject(jsonString);
+                        String device_id = json.getString("device_id");
+                        textViewConnectedDevice.setText(device_id);
+                        cup_uuid = device_id;
+                        textViewStatus.setText("Connecting");
+                        isConnectingCup = true;
+                    }catch(JSONException ex) {
+                        Log.e(TAG, ex.getMessage());
+                    }
                     start();
                 }
             });
